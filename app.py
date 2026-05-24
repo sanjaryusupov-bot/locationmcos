@@ -12,19 +12,19 @@ st.set_page_config(
     layout="wide"
 )
 
-# CSS для улучшения дизайна
+# CSS для дизайна
 st.markdown("""
 <style>
     .main-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
+        padding: 1.5rem;
         border-radius: 10px;
         margin-bottom: 2rem;
         text-align: center;
     }
     .info-card {
         background: #f8f9fa;
-        padding: 1.5rem;
+        padding: 1.2rem;
         border-radius: 10px;
         border-left: 4px solid #ff4b4b;
         margin-bottom: 1rem;
@@ -35,25 +35,12 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
         text-align: center;
+        margin-top: 10px;
     }
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+    .stSelectbox label {
+        font-size: 16px;
         font-weight: bold;
-        border: none;
-        padding: 0.5rem 2rem;
-        border-radius: 5px;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-    }
-    div[data-testid="column"] {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        color: #333;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -106,7 +93,6 @@ def load_data_from_gsheet():
         return get_sample_data()
 
 def get_sample_data():
-    """Данные из вашей таблицы"""
     return [
         {
             "name": "Новруз",
@@ -140,63 +126,45 @@ def get_sample_data():
         }
     ]
 
-# Функция для геокодирования с несколькими попытками
+# Функция для геокодирования с кэшированием
 @st.cache_data(ttl=86400)
 def geocode_address(address):
-    """Улучшенное геокодирование с несколькими вариантами адреса"""
+    """Преобразует адрес в координаты"""
     
-    # Очищаем адрес
-    address = address.replace('г.', '').replace('ул.', '').strip()
+    # Очищаем адрес для лучшего поиска
+    clean_address = address.replace('г.', '').replace('ул.', '').replace('р-н', 'район').strip()
     
-    # Пробуем разные варианты адреса
-    variants = [
-        address,
-        address.replace('район', 'р-н'),
-        address.split(',')[0] + ', ' + ','.join(address.split(',')[1:3]) if len(address.split(',')) > 2 else address,
-    ]
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": f"{clean_address}, Узбекистан",
+        "format": "json",
+        "limit": 1,
+        "accept-language": "ru"
+    }
+    headers = {
+        "User-Agent": "MapApp/1.0"
+    }
     
-    for variant in variants[:2]:  # Пробуем первые 2 варианта
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": variant + ", Узбекистан",
-            "format": "json",
-            "limit": 1,
-            "accept-language": "ru"
-        }
-        headers = {
-            "User-Agent": "MapApp/1.0"
-        }
-        
-        try:
-            time.sleep(0.5)  # Задержка чтобы не заблокировали
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    return float(data[0]["lat"]), float(data[0]["lon"])
-        except:
-            continue
-    
-    # Если не нашли, пробуем поискать только по названию района/города
-    parts = address.split(',')
-    if len(parts) > 1:
-        city = parts[0].strip()
-        try:
-            url = "https://nominatim.openstreetmap.org/search"
-            params = {"q": city + ", Узбекистан", "format": "json", "limit": 1}
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    return float(data[0]["lat"]), float(data[0]["lon"])
-        except:
-            pass
+    try:
+        time.sleep(0.3)  # Небольшая задержка
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+    except:
+        pass
     
     return None, None
 
+# Функция для получения координат с принудительным обновлением
+@st.cache_data(ttl=0)  # Не кэшируем, чтобы всегда искать заново
+def get_coordinates(address):
+    return geocode_address(address)
+
 # Функция для создания карты
 def create_map(location_data):
-    # Координаты Ташкента
+    # Координаты Ташкента (по умолчанию)
     TASHKENT_COORDS = (41.2995, 69.2401)
     
     if location_data.get("lat") and location_data.get("lon"):
@@ -207,15 +175,15 @@ def create_map(location_data):
             tiles='OpenStreetMap'
         )
         
-        # Стилизованный popup
+        # Информационное окно
         popup_html = f"""
         <div style="font-family: 'Segoe UI', Arial, sans-serif; min-width: 250px;">
-            <h3 style="color: #ff4b4b; margin: 0 0 10px 0; border-bottom: 2px solid #ff4b4b;">
+            <h3 style="color: #ff4b4b; margin: 0 0 10px 0;">
                 🏪 {location_data['name']}
             </h3>
             <div style="margin: 10px 0;">
                 <strong>📍 Адрес:</strong><br>
-                <span style="color: #666;">{location_data['address']}</span>
+                {location_data['address']}
             </div>
             <div style="margin: 10px 0; background: #f0f0f0; padding: 8px; border-radius: 5px;">
                 <strong>🕐 Время работы:</strong><br>
@@ -224,7 +192,7 @@ def create_map(location_data):
         </div>
         """
         
-        # Красивый маркер
+        # Маркер
         folium.Marker(
             location=[location_data["lat"], location_data["lon"]],
             popup=folium.Popup(popup_html, max_width=350),
@@ -232,19 +200,21 @@ def create_map(location_data):
             icon=folium.Icon(color="red", icon="shop", prefix="glyphicon")
         ).add_to(m)
         
-        # Добавляем точку с радиусом
+        # Круг для выделения
         folium.CircleMarker(
-            radius=15,
+            radius=20,
             location=[location_data["lat"], location_data["lon"]],
             color="#ff4b4b",
             fill=True,
             fill_color="#ff4b4b",
-            fill_opacity=0.3,
-            popup=location_data['name']
+            fill_opacity=0.2,
+            weight=2
         ).add_to(m)
         
     else:
         m = folium.Map(location=TASHKENT_COORDS, zoom_start=12, tiles='OpenStreetMap')
+        # Добавляем текст поверх карты через HTML (только если нет координат)
+        st.warning("⚠️ Не удалось определить точное местоположение на карте. Показан центр города.")
     
     return m
 
@@ -252,8 +222,8 @@ def create_map(location_data):
 # Заголовок
 st.markdown("""
 <div class="main-header">
-    <h1 style="color: white; margin: 0;">🗺️ Интерактивная карта заведений</h1>
-    <p style="color: white; margin: 10px 0 0 0;">Выберите заведение и найдите его на карте</p>
+    <h1 style="color: white; margin: 0;">🗺️ Карта заведений</h1>
+    <p style="color: white; margin: 10px 0 0 0;">Выберите заведение из списка</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -268,10 +238,10 @@ if not locations:
 # Выбор заведения
 st.markdown("### 🔍 Выберите заведение")
 
-# Создаем колонки для селектора
-col_selector, col_empty = st.columns([2, 1])
+# Создаем две колонки для селектора
+col1, col2, col3 = st.columns([1, 2, 1])
 
-with col_selector:
+with col2:
     selected_name = st.selectbox(
         "",
         [loc["name"] for loc in locations],
@@ -282,7 +252,14 @@ with col_selector:
 # Получаем выбранную локацию
 selected_location = next(loc for loc in locations if loc["name"] == selected_name)
 
-# Основной контент
+# Автоматически получаем координаты при выборе заведения
+with st.spinner(f"🔍 Поиск {selected_location['name']} на карте..."):
+    lat, lon = get_coordinates(selected_location['address'])
+    if lat and lon:
+        selected_location["lat"] = lat
+        selected_location["lon"] = lon
+
+# Информация и карта
 col_info, col_map = st.columns([1, 2])
 
 with col_info:
@@ -291,60 +268,15 @@ with col_info:
         <h2 style="color: #ff4b4b; margin-top: 0;">📋 {selected_location['name']}</h2>
         <p><strong>📍 Адрес:</strong><br>{selected_location['address']}</p>
         <div class="work-time">
-            🕐 {selected_location['work_time']}
+            🕐 Время работы: {selected_location['work_time']}
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Кнопка поиска
-    if st.button("📍 Показать на карте", use_container_width=True):
-        with st.spinner("🔍 Поиск адреса на карте..."):
-            lat, lon = geocode_address(selected_location['address'])
-            if lat and lon:
-                st.session_state['lat'] = lat
-                st.session_state['lon'] = lon
-                st.session_state['found'] = True
-                st.success("✅ Адрес найден!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("❌ Адрес не найден")
-                st.info("💡 Попробуйте уточнить адрес или обратитесь к администратору")
 
 with col_map:
-    st.markdown("### 🗺️ Карта")
-    
-    if 'found' in st.session_state and st.session_state.get('found', False):
-        location_with_coords = selected_location.copy()
-        location_with_coords["lat"] = st.session_state.get('lat')
-        location_with_coords["lon"] = st.session_state.get('lon')
-        m = create_map(location_with_coords)
-        folium_static(m, width=700, height=500)
-    else:
-        m = create_map({})
-        st.info("👆 Нажмите кнопку 'Показать на карте' чтобы увидеть местоположение")
-        folium_static(m, width=700, height=500)
-
-# Нижняя часть со списком заведений
-st.markdown("---")
-st.markdown("### 📋 Все заведения")
-
-# Создаем сетку из заведений
-cols = st.columns(3)
-for idx, loc in enumerate(locations):
-    with cols[idx % 3]:
-        st.markdown(f"""
-        <div style="
-            background: #f8f9fa; 
-            padding: 10px; 
-            border-radius: 8px; 
-            margin: 5px;
-            border-left: 3px solid #ff4b4b;
-        ">
-            <b>{loc['name']}</b><br>
-            <span style="font-size: 12px; color: #666;">🕐 {loc['work_time']}</span>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("### 🗺️ Местоположение на карте")
+    m = create_map(selected_location)
+    folium_static(m, width=700, height=500)
 
 # Footer
 st.markdown("---")
