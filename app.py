@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import folium_static
-import re
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-import json
+import requests
+from time import sleep
 
 # Настройка страницы
 st.set_page_config(page_title="Карта заведений", layout="wide")
@@ -15,42 +13,109 @@ st.set_page_config(page_title="Карта заведений", layout="wide")
 def load_data_from_gsheet():
     # ID вашей таблицы
     SPREADSHEET_ID = "1hKZ8ggNLW-OY1bV8xAW7PKl50Fof2co86oxGK92YPAA"
-    RANGE_NAME = "Лист1!A:A"  # Вкладка "Лист1", колонка A
     
     try:
-        # Альтернативный способ: чтение через pandas без авторизации (публичная таблица)
+        # Пробуем загрузить как CSV с указанием GID
         url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&gid=683057239"
-        df = pd.read_csv(url, header=None)
+        
+        # Добавляем заголовки для корректной загрузки
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        # Сохраняем содержимое в файл для pandas
+        with open('temp.csv', 'w', encoding='utf-8') as f:
+            f.write(response.text)
+        
+        df = pd.read_csv('temp.csv', header=None, encoding='utf-8')
         
         # Извлекаем данные из колонки A
         data = df[0].dropna().tolist()
         
         # Парсим данные: группируем по 3 строки (название, адрес, время работы)
         locations = []
-        for i in range(0, len(data), 3):
-            if i + 2 < len(data):
-                name = str(data[i]).strip()
-                address = str(data[i+1]).strip()
-                work_time = str(data[i+2]).strip()
+        i = 0
+        while i < len(data):
+            # Пропускаем пустые или невалидные строки
+            if pd.isna(data[i]) or str(data[i]).strip() == '':
+                i += 1
+                continue
                 
-                # Пропускаем пустые строки
-                if name and address and work_time:
-                    locations.append({
-                        "name": name,
-                        "address": address,
-                        "work_time": work_time
-                    })
+            name = str(data[i]).strip()
+            
+            # Ищем следующие строки для адреса и времени
+            address = None
+            work_time = None
+            
+            # Ищем адрес (должен содержать "Адрес:")
+            for j in range(i+1, min(i+5, len(data))):
+                if j < len(data) and data[j] and 'адрес' in str(data[j]).lower():
+                    address = str(data[j]).strip()
+                    # Ищем время работы после адреса
+                    for k in range(j+1, min(j+3, len(data))):
+                        if k < len(data) and data[k] and ('время' in str(data[k]).lower() or 'работы' in str(data[k]).lower()):
+                            work_time = str(data[k]).strip()
+                            break
+                    break
+            
+            if name and address and work_time:
+                locations.append({
+                    "name": name,
+                    "address": address,
+                    "work_time": work_time
+                })
+                i = i + 3
+            else:
+                i += 1
         
         return locations
+        
     except Exception as e:
-        st.error(f"Ошибка загрузки данных: {e}")
-        return []
+        st.error(f"Ошибка загрузки данных: {str(e)}")
+        # Возвращаем тестовые данные для демонстрации
+        return get_sample_data()
+
+def get_sample_data():
+    """Тестовые данные на случай ошибки загрузки"""
+    return [
+        {
+            "name": "Новруз",
+            "address": "г.Чирчик, ул.Шарафа Рашидова, д.37",
+            "work_time": "09:00-20:00"
+        },
+        {
+            "name": "Феруза",
+            "address": "г.Ташкент, Мирзо-Улугбекский р-н, ул.Феруза-1, д.32А",
+            "work_time": "10:00-23:00"
+        },
+        {
+            "name": "Кургантепа",
+            "address": "г.Ташкент, Янгихаетский р-н, ул.Кургантепа, д.11",
+            "work_time": "10:00-23:00"
+        },
+        {
+            "name": "Лютфи",
+            "address": "г. Ташкент, Учтепинский р-н, ул.Лутфий, д.2-Г",
+            "work_time": "10:00-23:00"
+        },
+        {
+            "name": "Бурханов",
+            "address": "г. Ташкент, Мирзо-Улугбекский р-н, Алишер Навои МФЙ, Корасу 2-квартал, д.18Д",
+            "work_time": "10:00-23:00"
+        },
+        {
+            "name": "Карасу",
+            "address": "г.Ташкент, Мирзо-Улугбекский р-н, Янги Авайхон МФЙ, Корасу-6, д.7Б",
+            "work_time": "10:00-23:00"
+        }
+    ]
 
 # Функция для геокодирования адреса через Nominatim (OpenStreetMap)
+@st.cache_data(ttl=86400)
 def geocode_address(address):
-    import requests
-    from time import sleep
-    
     url = "https://nominatim.openstreetmap.org/search"
     params = {
         "q": address,
@@ -63,21 +128,21 @@ def geocode_address(address):
     }
     
     try:
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if data:
                 return float(data[0]["lat"]), float(data[0]["lon"])
     except Exception as e:
-        st.warning(f"Ошибка геокодирования для {address}: {e}")
+        st.warning(f"Ошибка геокодирования: {str(e)}")
     
     return None, None
 
 # Функция для создания карты с выбранной локацией
 def create_map(location_data):
-    if location_data["lat"] is None or location_data["lon"] is None:
-        st.error("Не удалось определить координаты адреса")
-        return folium.Map(location=[41.2995, 69.2401], zoom_start=12)  # Центр Ташкента
+    if location_data.get("lat") is None or location_data.get("lon") is None:
+        # Центр Ташкента
+        return folium.Map(location=[41.2995, 69.2401], zoom_start=12)
     
     # Создаем карту с центром на выбранной локации
     m = folium.Map(
@@ -117,7 +182,8 @@ def create_map(location_data):
         popup=location_data["name"],
         color="#3186cc",
         fill=True,
-        fill_color="#3186cc"
+        fill_color="#3186cc",
+        fill_opacity=0.3
     ).add_to(m)
     
     return m
@@ -131,15 +197,7 @@ with st.spinner("Загрузка данных из Google Sheets..."):
     locations = load_data_from_gsheet()
 
 if not locations:
-    st.error("Не удалось загрузить данные. Проверьте доступ к таблице.")
-    st.info("""
-    **Инструкция:** 
-    1. Убедитесь, что таблица опубликована как CSV или имеет публичный доступ
-    2. Проверьте, что данные находятся на вкладке "Лист1" в колонке A
-    3. Данные должны быть сгруппированы по 3 строки: название → адрес → время работы
-    
-    **Альтернативный вариант:** если таблица закрыта, вы можете скопировать данные в локальный CSV файл.
-    """)
+    st.error("Не удалось загрузить данные.")
     st.stop()
 
 # Создаем список названий для выбора
@@ -157,6 +215,10 @@ selected_name = st.selectbox(
 selected_location = next((loc for loc in locations if loc["name"] == selected_name), None)
 
 if selected_location:
+    # Инициализируем координаты в session_state
+    if 'coordinates' not in st.session_state:
+        st.session_state.coordinates = {}
+    
     # Показываем информацию в две колонки
     col1, col2 = st.columns([1, 1])
     
@@ -168,27 +230,23 @@ if selected_location:
         - **Время работы:** {selected_location['work_time']}
         """)
         
-        # Кнопка для обновления координат
-        if st.button("🔄 Показать на карте", type="primary"):
-            with st.spinner("Поиск адреса на карте..."):
+        # Кнопка для поиска на карте
+        if st.button("🔍 Найти на карте", type="primary"):
+            with st.spinner("Поиск адреса..."):
                 lat, lon = geocode_address(selected_location['address'])
-                selected_location["lat"] = lat
-                selected_location["lon"] = lon
-                
                 if lat and lon:
-                    st.success("📍 Адрес найден на карте!")
-                    st.session_state['lat'] = lat
-                    st.session_state['lon'] = lon
-                    st.session_state['map_updated'] = True
+                    st.session_state.coordinates[selected_name] = (lat, lon)
+                    st.success("✅ Адрес найден!")
+                    st.rerun()
                 else:
-                    st.error("❌ Адрес не найден. Проверьте правильность адреса.")
-                    st.session_state['map_updated'] = False
-            st.rerun()
+                    st.error("❌ Адрес не найден. Попробуйте уточнить адрес.")
     
     with col2:
         st.info("""
-        💡 **Подсказка:**
-        Нажмите кнопку "Показать на карте", чтобы увидеть местоположение
+        💡 **Инструкция:**
+        1. Нажмите кнопку **"Найти на карте"**
+        2. Дождитесь поиска адреса
+        3. На карте появится маркер с информацией
         """)
     
     st.markdown("---")
@@ -196,20 +254,16 @@ if selected_location:
     # Отображаем карту
     st.subheader("🗺️ Карта")
     
-    # Проверяем, есть ли координаты в session_state
-    if 'map_updated' in st.session_state and st.session_state['map_updated']:
-        if 'lat' in st.session_state and 'lon' in st.session_state:
-            location_with_coords = selected_location.copy()
-            location_with_coords["lat"] = st.session_state['lat']
-            location_with_coords["lon"] = st.session_state['lon']
-            m = create_map(location_with_coords)
-            folium_static(m, width=800, height=500)
-        else:
-            st.warning("Нажмите кнопку выше, чтобы найти адрес на карте")
+    # Проверяем, есть ли координаты для выбранного заведения
+    if selected_name in st.session_state.coordinates:
+        location_with_coords = selected_location.copy()
+        location_with_coords["lat"], location_with_coords["lon"] = st.session_state.coordinates[selected_name]
+        m = create_map(location_with_coords)
+        folium_static(m, width=800, height=500)
     else:
-        # Если координат нет, показываем карту с центром на Ташкенте
+        # Показываем карту с центром на Ташкенте
         m = folium.Map(location=[41.2995, 69.2401], zoom_start=12)
-        st.info("👉 Нажмите кнопку 'Показать на карте', чтобы увидеть местоположение выбранного заведения")
+        st.info("👆 Нажмите кнопку **'Найти на карте'** выше, чтобы увидеть местоположение")
         folium_static(m, width=800, height=500)
 
 # Добавляем боковую панель с информацией
@@ -222,7 +276,7 @@ with st.sidebar:
     
     ### Как пользоваться:
     1. Выберите заведение из списка
-    2. Нажмите "Показать на карте"
+    2. Нажмите **"Найти на карте"**
     3. Дождитесь загрузки карты
     4. Кликните на маркер, чтобы увидеть подробности
     
@@ -230,16 +284,13 @@ with st.sidebar:
     - **Streamlit** - веб-интерфейс
     - **Folium** - отображение карт
     - **OpenStreetMap** - геокодирование
-    - **Google Sheets API** - данные
-    
-    ### Данные:
     """)
     
-    # Показываем список всех заведений
-    st.markdown("**Доступные заведения:**")
+    st.markdown("---")
+    st.markdown("**📋 Список заведений:**")
     for loc in locations:
         st.markdown(f"- {loc['name']}")
 
-# Добавляем информацию о времени последнего обновления
+# Footer
 st.markdown("---")
-st.caption("🗺️ Данные загружены из Google Sheets | Карты OpenStreetMap | Обновлено: " + pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"))
+st.caption(f"🗺️ Данные загружены | Карты OpenStreetMap | Обновлено: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
