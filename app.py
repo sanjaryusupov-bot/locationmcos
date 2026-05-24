@@ -3,7 +3,6 @@ import pandas as pd
 import folium
 from streamlit_folium import folium_static
 import requests
-import time
 
 # Настройка страницы
 st.set_page_config(
@@ -37,13 +36,28 @@ st.markdown("""
         text-align: center;
         margin-top: 10px;
     }
-    .stSelectbox label {
-        font-size: 16px;
-        font-weight: bold;
-        color: #333;
+    .coordinates {
+        background: #e3f2fd;
+        padding: 0.5rem;
+        border-radius: 5px;
+        font-size: 12px;
+        text-align: center;
+        margin-top: 10px;
+        font-family: monospace;
     }
 </style>
 """, unsafe_allow_html=True)
+
+# БАЗА КООРДИНАТ ДЛЯ ВАШИХ ЗАВЕДЕНИЙ
+# Вы можете добавить или исправить координаты здесь
+LOCATIONS_COORDS = {
+    "Новруз": {"lat": 41.4712, "lon": 69.5821, "accuracy": "high"},  # Чирчик
+    "Феруза": {"lat": 41.2995, "lon": 69.2401, "accuracy": "medium"},  # Ташкент, Мирзо-Улугбекский р-н
+    "Кургантепа": {"lat": 41.2500, "lon": 69.2700, "accuracy": "medium"},  # Ташкент, Янгихаетский р-н
+    "Лютфи": {"lat": 41.3200, "lon": 69.2200, "accuracy": "medium"},  # Ташкент, Учтепинский р-н
+    "Бурханов": {"lat": 41.3100, "lon": 69.2500, "accuracy": "medium"},  # Ташкент, Мирзо-Улугбекский р-н, Корасу
+    "Карасу": {"lat": 41.3080, "lon": 69.2600, "accuracy": "medium"},  # Ташкент, Корасу-6
+}
 
 # Функция для загрузки данных из Google Sheets
 @st.cache_data(ttl=3600)
@@ -78,10 +92,15 @@ def load_data_from_gsheet():
                         break
             
             if name and address and work_time:
+                # Добавляем координаты из локальной базы
+                coords = LOCATIONS_COORDS.get(name, {"lat": None, "lon": None})
                 locations.append({
                     "name": name,
                     "address": address,
-                    "work_time": work_time
+                    "work_time": work_time,
+                    "lat": coords["lat"],
+                    "lon": coords["lon"],
+                    "accuracy": coords.get("accuracy", "unknown")
                 })
                 i += 3
             else:
@@ -93,60 +112,71 @@ def load_data_from_gsheet():
         return get_sample_data()
 
 def get_sample_data():
+    """Данные с координатами из локальной базы"""
     return [
         {
             "name": "Новруз",
-            "address": "Чирчик, улица Шарафа Рашидова, 37",
-            "work_time": "09:00-20:00"
+            "address": "г.Чирчик, ул.Шарафа Рашидова, д.37",
+            "work_time": "09:00-20:00",
+            "lat": 41.4712,
+            "lon": 69.5821,
+            "accuracy": "high"
         },
         {
             "name": "Феруза",
-            "address": "Ташкент, Мирзо-Улугбекский район, улица Феруза-1, 32А",
-            "work_time": "10:00-23:00"
+            "address": "г.Ташкент, Мирзо-Улугбекский р-н, ул.Феруза-1, д.32А",
+            "work_time": "10:00-23:00",
+            "lat": 41.2995,
+            "lon": 69.2401,
+            "accuracy": "medium"
         },
         {
             "name": "Кургантепа",
-            "address": "Ташкент, Янгихаетский район, улица Кургантепа, 11",
-            "work_time": "10:00-23:00"
+            "address": "г.Ташкент, Янгихаетский р-н, ул.Кургантепа, д.11",
+            "work_time": "10:00-23:00",
+            "lat": 41.2500,
+            "lon": 69.2700,
+            "accuracy": "medium"
         },
         {
             "name": "Лютфи",
-            "address": "Ташкент, Учтепинский район, улица Лутфий, 2-Г",
-            "work_time": "10:00-23:00"
+            "address": "г. Ташкент, Учтепинский р-н, ул.Лутфий, д.2-Г",
+            "work_time": "10:00-23:00",
+            "lat": 41.3200,
+            "lon": 69.2200,
+            "accuracy": "medium"
         },
         {
             "name": "Бурханов",
-            "address": "Ташкент, Мирзо-Улугбекский район, Корасу 2-квартал, 18Д",
-            "work_time": "10:00-23:00"
+            "address": "г. Ташкент, Мирзо-Улугбекский р-н, Алишер Навои МФЙ, Корасу 2-квартал, д.18Д",
+            "work_time": "10:00-23:00",
+            "lat": 41.3100,
+            "lon": 69.2500,
+            "accuracy": "medium"
         },
         {
             "name": "Карасу",
-            "address": "Ташкент, Мирзо-Улугбекский район, Корасу-6, 7Б",
-            "work_time": "10:00-23:00"
+            "address": "г.Ташкент, Мирзо-Улугбекский р-н, Янги Авайхон МФЙ, Корасу-6, д.7Б",
+            "work_time": "10:00-23:00",
+            "lat": 41.3080,
+            "lon": 69.2600,
+            "accuracy": "medium"
         }
     ]
 
-# Функция для геокодирования с кэшированием
-@st.cache_data(ttl=86400)
-def geocode_address(address):
-    """Преобразует адрес в координаты"""
-    
-    # Очищаем адрес для лучшего поиска
-    clean_address = address.replace('г.', '').replace('ул.', '').replace('р-н', 'район').strip()
-    
+# Функция для поиска координат через OpenStreetMap (если нет в базе)
+def find_coordinates_online(address):
+    """Поиск координат через OpenStreetMap"""
     url = "https://nominatim.openstreetmap.org/search"
     params = {
-        "q": f"{clean_address}, Узбекистан",
+        "q": f"{address}, Узбекистан",
         "format": "json",
         "limit": 1,
         "accept-language": "ru"
     }
-    headers = {
-        "User-Agent": "MapApp/1.0"
-    }
+    headers = {"User-Agent": "MapApp/1.0"}
     
     try:
-        time.sleep(0.3)  # Небольшая задержка
         response = requests.get(url, params=params, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
@@ -154,23 +184,18 @@ def geocode_address(address):
                 return float(data[0]["lat"]), float(data[0]["lon"])
     except:
         pass
-    
     return None, None
-
-# Функция для получения координат с принудительным обновлением
-@st.cache_data(ttl=0)  # Не кэшируем, чтобы всегда искать заново
-def get_coordinates(address):
-    return geocode_address(address)
 
 # Функция для создания карты
 def create_map(location_data):
     # Координаты Ташкента (по умолчанию)
     TASHKENT_COORDS = (41.2995, 69.2401)
     
+    # Если есть координаты
     if location_data.get("lat") and location_data.get("lon"):
         m = folium.Map(
             location=[location_data["lat"], location_data["lon"]],
-            zoom_start=17,
+            zoom_start=17 if location_data.get("accuracy") == "high" else 15,
             control_scale=True,
             tiles='OpenStreetMap'
         )
@@ -213,8 +238,6 @@ def create_map(location_data):
         
     else:
         m = folium.Map(location=TASHKENT_COORDS, zoom_start=12, tiles='OpenStreetMap')
-        # Добавляем текст поверх карты через HTML (только если нет координат)
-        st.warning("⚠️ Не удалось определить точное местоположение на карте. Показан центр города.")
     
     return m
 
@@ -238,7 +261,6 @@ if not locations:
 # Выбор заведения
 st.markdown("### 🔍 Выберите заведение")
 
-# Создаем две колонки для селектора
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
@@ -252,23 +274,25 @@ with col2:
 # Получаем выбранную локацию
 selected_location = next(loc for loc in locations if loc["name"] == selected_name)
 
-# Автоматически получаем координаты при выборе заведения
-with st.spinner(f"🔍 Поиск {selected_location['name']} на карте..."):
-    lat, lon = get_coordinates(selected_location['address'])
-    if lat and lon:
-        selected_location["lat"] = lat
-        selected_location["lon"] = lon
-
 # Информация и карта
 col_info, col_map = st.columns([1, 2])
 
 with col_info:
+    accuracy_text = {
+        "high": "✅ Точное местоположение",
+        "medium": "📍 Приблизительное местоположение",
+        "unknown": "⚠️ Местоположение уточняется"
+    }.get(selected_location.get("accuracy", "unknown"), "📍 На карте")
+    
     st.markdown(f"""
     <div class="info-card">
         <h2 style="color: #ff4b4b; margin-top: 0;">📋 {selected_location['name']}</h2>
         <p><strong>📍 Адрес:</strong><br>{selected_location['address']}</p>
         <div class="work-time">
             🕐 Время работы: {selected_location['work_time']}
+        </div>
+        <div class="coordinates">
+            {accuracy_text}
         </div>
     </div>
     """, unsafe_allow_html=True)
